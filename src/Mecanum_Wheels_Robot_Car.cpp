@@ -4,8 +4,11 @@
 int   in[128];
 byte NoteV[13]={8,23,40,57,76,96,116,138,162,187,213,241,255};
 float f_peaks[5]; // top 5 frequencies
-int Mic_pin = A0;  // microphone analog pin
+int Mic_pin = A4;  // microphone analog pin
 int detectedNote = -1; // -1 none, 0..11 notes C..B
+// Behavior flags / sampling
+const bool DEBUG_NOTES = false; // set true to print every detected note
+const int SAMPLE_SIZE = 5; // number of consecutive detections to sample (>=5 recommended)
 
 // Forward declarations
 void Tone_det();
@@ -152,9 +155,67 @@ void setup(){
 }
 
 void loop(){
-  // Detect tone and map note to robot movement
-  Tone_det();
+  // Take SAMPLE_SIZE detections and pick the most frequent note
+  int notes[SAMPLE_SIZE];
+  for (int i=0;i<SAMPLE_SIZE;i++) {
+    Tone_det();
+    notes[i] = detectedNote;
+    delay(30); // small pause between samples
+  }
 
+  // Count occurrences of each note (0..11)
+  int counts[12] = {0};
+  for (int i=0;i<SAMPLE_SIZE;i++) {
+    int n = notes[i];
+    if (n >=0 && n <=11) counts[n]++;
+  }
+
+  // Find most frequent note
+  int maxCount = 0;
+  int maxNote = -1;
+  for (int n=0;n<12;n++) {
+    if (counts[n] > maxCount) { maxCount = counts[n]; maxNote = n; }
+  }
+
+  // Required count = ceil(SAMPLE_SIZE * 0.8)
+  int required = (SAMPLE_SIZE * 80 + 99) / 100;
+
+  if (maxCount >= required) {
+    detectedNote = maxNote;
+  } else {
+    detectedNote = -1; // too noisy -> stop
+  }
+
+  // Compute average (mean) of valid sampled notes
+  int sumNotes = 0;
+  int validNotes = 0;
+  for (int i=0;i<SAMPLE_SIZE;i++) {
+    if (notes[i] >= 0 && notes[i] <= 11) { sumNotes += notes[i]; validNotes++; }
+  }
+  int avgRounded = -1;
+  if (validNotes > 0) {
+    avgRounded = (sumNotes + validNotes/2) / validNotes; // rounded average
+  }
+
+  // Only print the confirmed note when the most frequent note equals the rounded average
+  if (maxCount >= required && avgRounded == maxNote) {
+    switch(maxNote) {
+      case 0: Serial.println("C"); break;
+      case 1: Serial.println("C#"); break;
+      case 2: Serial.println("D"); break;
+      case 3: Serial.println("D#"); break;
+      case 4: Serial.println("E"); break;
+      case 5: Serial.println("F"); break;
+      case 6: Serial.println("F#"); break;
+      case 7: Serial.println("G"); break;
+      case 8: Serial.println("G#"); break;
+      case 9: Serial.println("A"); break;
+      case 10: Serial.println("A#"); break;
+      case 11: Serial.println("B"); break;
+    }
+  }
+
+  // Map the (stable) detectedNote to movement
   switch(detectedNote) {
     case 0: // C
       Motor(Move_Forward,Speed1,Speed2,Speed3,Speed4);
@@ -262,19 +323,19 @@ k=0;j=0;
         detectedNote = k;
         // Print note for debug
         switch(k) {
-          case 0: Serial.println("C"); break;
-          case 1: Serial.println("C#"); break;
-          case 2: Serial.println("D"); break;
-          case 3: Serial.println("D#"); break;
-          case 4: Serial.println("E"); break;
-          case 5: Serial.println("F"); break;
-          case 6: Serial.println("F#"); break;
-          case 7: Serial.println("G"); break;
-          case 8: Serial.println("G#"); break;
-          case 9: Serial.println("A"); break;
-          case 10: Serial.println("A#"); break;
-          case 11: Serial.println("B"); break;
-          default: Serial.println("-"); detectedNote = -1; break;
+          case 0: if (DEBUG_NOTES) Serial.println("C"); break;
+          case 1: if (DEBUG_NOTES) Serial.println("C#"); break;
+          case 2: if (DEBUG_NOTES) Serial.println("D"); break;
+          case 3: if (DEBUG_NOTES) Serial.println("D#"); break;
+          case 4: if (DEBUG_NOTES) Serial.println("E"); break;
+          case 5: if (DEBUG_NOTES) Serial.println("F"); break;
+          case 6: if (DEBUG_NOTES) Serial.println("F#"); break;
+          case 7: if (DEBUG_NOTES) Serial.println("G"); break;
+          case 8: if (DEBUG_NOTES) Serial.println("G#"); break;
+          case 9: if (DEBUG_NOTES) Serial.println("A"); break;
+          case 10: if (DEBUG_NOTES) Serial.println("A#"); break;
+          case 11: if (DEBUG_NOTES) Serial.println("B"); break;
+          default: if (DEBUG_NOTES) Serial.println("-"); detectedNote = -1; break;
         }
        }
 }

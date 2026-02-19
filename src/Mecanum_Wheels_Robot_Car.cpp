@@ -8,7 +8,8 @@ int Mic_pin = A4;  // microphone analog pin
 int detectedNote = -1; // -1 none, 0..11 notes C..B
 // Behavior flags / sampling
 const bool DEBUG_NOTES = false; // set true to print every detected note
-const int SAMPLE_SIZE = 5; // number of consecutive detections to sample (>=5 recommended)
+const bool VERBOSE = false; // true = mostrar info detallada, false = silencioso (más rápido)
+const int SAMPLE_SIZE = 5; // number of consecutive detections to sample
 
 // Forward declarations
 void Tone_det();
@@ -157,12 +158,16 @@ void setup(){
 void loop(){
   // Take SAMPLE_SIZE detections and pick the most frequent note
   int notes[SAMPLE_SIZE];
+  
   for (int i=0;i<SAMPLE_SIZE;i++) {
     Tone_det();
     notes[i] = detectedNote;
-    delay(30); // small pause between samples
+    delay(0); // Pausa entre muestras - reducido para mayor velocidad
   }
 
+  // Nombres de notas para mostrar
+  const char* noteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+  
   // Count occurrences of each note (0..11)
   int counts[12] = {0};
   for (int i=0;i<SAMPLE_SIZE;i++) {
@@ -177,80 +182,128 @@ void loop(){
     if (counts[n] > maxCount) { maxCount = counts[n]; maxNote = n; }
   }
 
-  // Required count = ceil(SAMPLE_SIZE * 0.8)
-  int required = (SAMPLE_SIZE * 80 + 99) / 100;
+  // Required count = al menos 4 de 5 muestras (80%)
+  int required = 4;
 
-  if (maxCount >= required) {
-    detectedNote = maxNote;
-  } else {
-    detectedNote = -1; // too noisy -> stop
-  }
-
-  // Compute average (mean) of valid sampled notes
-  int sumNotes = 0;
+  // Compute median (mediana) of valid sampled notes - más robusto contra outliers que el promedio
+  int validNotesArray[SAMPLE_SIZE];
   int validNotes = 0;
   for (int i=0;i<SAMPLE_SIZE;i++) {
-    if (notes[i] >= 0 && notes[i] <= 11) { sumNotes += notes[i]; validNotes++; }
+    if (notes[i] >= 0 && notes[i] <= 11) { 
+      validNotesArray[validNotes] = notes[i];
+      validNotes++;
+    }
   }
-  int avgRounded = -1;
+  
+  int median = -1;
   if (validNotes > 0) {
-    avgRounded = (sumNotes + validNotes/2) / validNotes; // rounded average
+    // Simple bubble sort para ordenar las notas válidas
+    for (int i=0; i<validNotes-1; i++) {
+      for (int j=0; j<validNotes-i-1; j++) {
+        if (validNotesArray[j] > validNotesArray[j+1]) {
+          int temp = validNotesArray[j];
+          validNotesArray[j] = validNotesArray[j+1];
+          validNotesArray[j+1] = temp;
+        }
+      }
+    }
+    // Tomar el valor del medio (mediana)
+    median = validNotesArray[validNotes/2];
   }
 
-  // Only print the confirmed note when the most frequent note equals the rounded average
-  if (maxCount >= required && avgRounded == maxNote) {
-    switch(maxNote) {
-      case 0: Serial.println("C"); break;
-      case 1: Serial.println("C#"); break;
-      case 2: Serial.println("D"); break;
-      case 3: Serial.println("D#"); break;
-      case 4: Serial.println("E"); break;
-      case 5: Serial.println("F"); break;
-      case 6: Serial.println("F#"); break;
-      case 7: Serial.println("G"); break;
-      case 8: Serial.println("G#"); break;
-      case 9: Serial.println("A"); break;
-      case 10: Serial.println("A#"); break;
-      case 11: Serial.println("B"); break;
+  // Validar: frecuencia suficiente Y mediana igual a la nota más frecuente
+  bool isStable = false;
+  if (maxCount >= required && maxNote >= 0) {
+    if (median == maxNote) {  // La mediana debe coincidir exactamente con la nota más frecuente
+      isStable = true;
     }
   }
 
+  // Decidir la nota detectada
+  if (isStable) {
+    detectedNote = maxNote;
+  } else {
+    detectedNote = -1;
+  }
+
+  // Mostrar información en formato compacto
+  if (VERBOSE) {
+    Serial.println("===============================");
+    Serial.print("Notas: [ ");
+    for (int i=0;i<SAMPLE_SIZE;i++) {
+      if (notes[i] >= 0 && notes[i] <= 11) {
+        Serial.print(noteNames[notes[i]]);
+      } else {
+        Serial.print("-");
+      }
+      if (i < SAMPLE_SIZE-1) Serial.print(", ");
+    }
+    Serial.println(" ]");
+    
+    Serial.print("Frecuente (");
+    Serial.print(maxCount);
+    Serial.print("/");
+    Serial.print(SAMPLE_SIZE);
+    Serial.print(") > ");
+    if (isStable && maxNote >= 0) {
+      Serial.print(noteNames[maxNote]);
+    } else {
+      Serial.print("X");
+    }
+    Serial.println(" <");
+    Serial.println("==============================");
+  }
+
   // Map the (stable) detectedNote to movement
+  // Activar el motor brevemente y luego detenerlo
+  // Solo notas principales - los sostenidos quedan como margen de error
   switch(detectedNote) {
-    case 0: // C
+    case 0: // C - Adelante
       Motor(Move_Forward,Speed1,Speed2,Speed3,Speed4);
+      delay(150);  // Pulso de movimiento
+      Motor(Stop,0,0,0,0);
       break;
-    case 1: // C#
+    case 1: // C# - Margen de error (Stop)
+      Motor(Stop,0,0,0,0);
+      break;
+    case 2: // D - Atrás
       Motor(Move_Backward,Speed1,Speed2,Speed3,Speed4);
+      delay(150);
+      Motor(Stop,0,0,0,0);
       break;
-    case 2: // D
+    case 3: // D# - Margen de error (Stop)
+      Motor(Stop,0,0,0,0);
+      break;
+    case 4: // E - Izquierda
       Motor(Left_Move,Speed1,Speed2,Speed3,Speed4);
+      delay(150);
+      Motor(Stop,0,0,0,0);
       break;
-    case 3: // D#
+    case 5: // F - Derecha
       Motor(Right_Move,Speed1,Speed2,Speed3,Speed4);
+      delay(150);
+      Motor(Stop,0,0,0,0);
       break;
-    case 4: // E
+    case 6: // F# - Margen de error (Stop)
+      Motor(Stop,0,0,0,0);
+      break;
+    case 7: // G - Giro izquierda
       Motor(Left_Rotate,Speed1,Speed2,Speed3,Speed4);
+      delay(320);
+      Motor(Stop,0,0,0,0);
       break;
-    case 5: // F
+    case 8: // G# - Margen de error (Stop)
+      Motor(Stop,0,0,0,0);
+      break;
+    case 9: // A - Giro derecha
       Motor(Right_Rotate,Speed1,Speed2,Speed3,Speed4);
+      delay(320);
+      Motor(Stop,0,0,0,0);
       break;
-    case 6: // F#
-      Motor(Upper_Left_Move,Speed1,Speed2,Speed3,Speed4);
+    case 10: // A# - Margen de error (Stop)
+      Motor(Stop,0,0,0,0);
       break;
-    case 7: // G
-      Motor(Upper_Right_Move,Speed1,Speed2,Speed3,Speed4);
-      break;
-    case 8: // G#
-      Motor(Lower_Left_Move,Speed1,Speed2,Speed3,Speed4);
-      break;
-    case 9: // A
-      Motor(Lower_Right_Move,Speed1,Speed2,Speed3,Speed4);
-      break;
-    case 10: // A#
-      Motor(Drift_Left,Speed1,Speed2,Speed3,Speed4);
-      break;
-    case 11: // B
+    case 11: // B - Margen de error (Stop)
       Motor(Stop,0,0,0,0);
       break;
     default:
@@ -258,7 +311,12 @@ void loop(){
       break;
   }
 
-  delay(150);
+  // Esperar a que el ruido del motor se disipe antes del siguiente muestreo
+  // Solo si se activó un movimiento (notas activas: C, D, E, F, G, A)
+  if (detectedNote == 0 || detectedNote == 2 || detectedNote == 4 || 
+      detectedNote == 5 || detectedNote == 7 || detectedNote == 9) {
+    delay(50);  // Tiempo para que las vibraciones se disipen
+  }
 
 }
 
@@ -270,6 +328,7 @@ void Tone_det()
   float a;
   float sum1=0,sum2=0;
   float sampling;
+  detectedNote = -1; // Inicializar por defecto
   a1=micros();
         for(int i=0;i<128;i++)
           {
